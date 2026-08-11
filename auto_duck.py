@@ -164,9 +164,11 @@ class SpeechDuckController:
         self,
         config: Config,
         input_device: int | None = None,
+        requested_sample_rate: int | None = None,
     ):
         self.config = config
         self.input_device = input_device
+        self.requested_sample_rate = requested_sample_rate
 
         self.running = threading.Event()
         self.running.set()
@@ -211,6 +213,34 @@ class SpeechDuckController:
         detected_rate = int(device_info["default_samplerate"])
 
         print(f"Detected microphone sample rate: " f"{detected_rate} Hz")
+
+        if self.requested_sample_rate is not None:
+
+            try:
+
+                sd.check_input_settings(
+                    device=self.input_device,
+                    channels=self.config.channels,
+                    dtype="int16",
+                    samplerate=self.requested_sample_rate,
+                )
+
+                self.config.sample_rate = self.requested_sample_rate
+
+                print(
+                    "Using requested sample rate: "
+                    f"{self.requested_sample_rate} Hz"
+                )
+
+                return
+
+            except sd.PortAudioError as exc:
+                raise RuntimeError(
+                    "The requested sample rate could not be opened for "
+                    "this microphone.\n\n"
+                    f"Requested: {self.requested_sample_rate} Hz\n"
+                    f"Device default: {detected_rate} Hz"
+                ) from exc
 
         # Best case:
         # microphone already uses WebRTC-supported rate.
@@ -674,6 +704,18 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--sample-rate",
+        type=int,
+        choices=sorted(SpeechDuckController.SUPPORTED_VAD_SAMPLE_RATES),
+        default=Config().sample_rate,
+        metavar="HZ",
+        help=(
+            "Microphone sample rate in Hz. Must be one of 8000, 16000, "
+            "32000, or 48000. Default: 16000."
+        ),
+    )
+
+    parser.add_argument(
         "--duck-volume",
         type=float,
         default=15.0,
@@ -717,6 +759,7 @@ def main():
         return
 
     config = Config(
+        sample_rate=args.sample_rate,
         duck_volume_percent=(args.duck_volume),
         silence_restore_seconds=(args.restore_delay),
         min_rms=args.rms,
@@ -726,6 +769,7 @@ def main():
     controller = SpeechDuckController(
         config=config,
         input_device=args.device_index,
+        requested_sample_rate=args.sample_rate,
     )
 
     def handle_exit(
